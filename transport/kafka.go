@@ -14,12 +14,14 @@ import (
 	flowmessage "github.com/cloudflare/goflow/v3/pb"
 	"github.com/cloudflare/goflow/v3/utils"
 	proto "github.com/golang/protobuf/proto"
+	protojson "google.golang.org/protobuf/encoding/protojson"
 )
 
 var (
 	KafkaTLS   *bool
 	KafkaSASL  *bool
 	KafkaTopic *string
+	KafkaJson  *bool
 	KafkaSrv   *string
 	KafkaBrk   *string
 
@@ -55,6 +57,7 @@ func RegisterFlags() {
 	KafkaTLS = flag.Bool("kafka.tls", false, "Use TLS to connect to Kafka")
 	KafkaSASL = flag.Bool("kafka.sasl", false, "Use SASL/PLAIN data to connect to Kafka (TLS is recommended and the environment variables KAFKA_SASL_USER and KAFKA_SASL_PASS need to be set)")
 	KafkaTopic = flag.String("kafka.topic", "flow-messages", "Kafka topic to produce to")
+	KafkaJson = flag.Bool("kafka.json", false, "Send protocol buffer messages as JSON format")
 	KafkaSrv = flag.String("kafka.srv", "", "SRV record containing a list of Kafka brokers (or use kafka.out.brokers)")
 	KafkaBrk = flag.String("kafka.brokers", "127.0.0.1:9092,[::1]:9092", "Kafka brokers list separated by commas")
 
@@ -166,12 +169,19 @@ func (s KafkaState) SendKafkaFlowMessage(flowMessage *flowmessage.FlowMessage) {
 		key = sarama.StringEncoder(keyStr)
 	}
 	var b []byte
-	if !s.FixedLengthProto {
-		b, _ = proto.Marshal(flowMessage)
+	if *KafkaJson {
+		/* Deprecated package github.com/golang/protobuf/proto is currently in use.
+			Convert MessageV1 to v2 untill google.golang.org/protobuf/proto is used
+		https://pkg.go.dev/github.com/golang/protobuf/proto?tab=doc#Message */
+		b, _ = protojson.Marshal(proto.MessageV2(flowMessage))
 	} else {
-		buf := proto.NewBuffer([]byte{})
-		buf.EncodeMessage(flowMessage)
-		b = buf.Bytes()
+		if !s.FixedLengthProto {
+			b, _ = proto.Marshal(flowMessage)
+		} else {
+			buf := proto.NewBuffer([]byte{})
+			buf.EncodeMessage(flowMessage)
+			b = buf.Bytes()
+		}
 	}
 	s.producer.Input() <- &sarama.ProducerMessage{
 		Topic: s.topic,
